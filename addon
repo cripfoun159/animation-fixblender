@@ -1,0 +1,124 @@
+bl_info = {
+    "name": "Batch Animation Fixer",
+    "author": "cripfoun",
+    "version": (1, 2),
+    "blender": (2, 80, 0),
+    "location": "View3D > Sidebar > Batch Anim Fixer",
+    "description": "Corrige position, orientation, hauteur et ajoute keyframe au début des animations",
+    "category": "Animation"
+}
+
+import bpy
+import os
+import subprocess
+from bpy.props import StringProperty
+from bpy.types import Operator, Panel
+from bpy_extras.io_utils import ImportHelper
+
+# Script de correction à écrire dans un fichier temporaire
+FIX_SCRIPT_CONTENT = """
+import bpy
+import mathutils
+import math
+
+def get_ik_direction(armature_obj):
+    pose_bones = armature_obj.pose.bones
+    try:
+        foot_l = pose_bones["ik_foot_l"].head
+        foot_r = pose_bones["ik_foot_r"].head
+    except KeyError:
+        print("Bones 'ik_foot_l' or 'ik_foot_r' not found.")
+        return None
+
+    direction = foot_r - foot_l
+    direction_2d = mathutils.Vector((direction.x, direction.y))
+    if direction_2d.length == 0:
+        return None
+    direction_2d.normalize()
+    angle = math.atan2(direction_2d.y, direction_2d.x)
+    return angle
+
+armature = next((obj for obj in bpy.context.scene.objects if obj.type == 'ARMATURE'), None)
+
+if armature:
+    bpy.context.view_layer.objects.active = armature
+    bpy.ops.object.mode_set(mode='OBJECT')
+
+    angle = get_ik_direction(armature)
+    if angle is not None:
+        armature.rotation_euler = (0, 0, angle)
+
+    # Met à Z = 0
+    bpy.context.view_layer.update()
+    bbox = [armature.matrix_world @ mathutils.Vector(corner) for corner in armature.bound_box]
+    min_z = min(v.z for v in bbox)
+    armature.location.z -= min_z
+
+    # Trouver la première frame active de la scène
+    start_frame = bpy.context.scene.frame_start
+    bpy.context.scene.frame_set(start_frame)
+
+    # Ajouter une keyframe
+    armature.keyframe_insert(data_path="location", frame=start_frame)
+    armature.keyframe_insert(data_path="rotation_euler", frame=start_frame)
+
+    bpy.ops.wm.save_mainfile()
+"""
+
+class BatchFixOperator(Operator, ImportHelper):
+    bl_idname = "wm.batch_fix_animations"
+    bl_label = "Corriger toutes les animations"
+
+    filter_folder: bpy.props.BoolProperty(default=True, options={'HIDDEN'})
+    directory: StringProperty(subtype='DIR_PATH')
+
+    def execute(self, context):
+        blender_exec = bpy.app.binary_path
+        temp_script_path = os.path.join(self.directory, "fix_temp_script.py")
+
+        # Écrit le script temporaire
+        with open(temp_script_path, "w", encoding="utf-8") as f:
+            f.write(FIX_SCRIPT_CONTENT)
+
+        # Liste tous les fichiers .blend dans le dossier
+        blend_files = [f for f in os.listdir(self.directory) if f.lower().endswith(".blend")]
+        if not blend_files:
+            self.report({'WARNING'}, "Aucun fichier .blend trouvé.")
+            return {'CANCELLED'}
+
+        for blend_file in blend_files:
+            blend_path = os.path.join(self.directory, blend_file)
+            print(f"✅ Traitement de : {blend_file}")
+            subprocess.call([
+                blender_exec,
+                "--background",
+                blend_path,
+                "--python", temp_script_path
+            ])
+
+        os.remove(temp_script_path)
+        self.report({'INFO'}, f"{len(blend_files)} fichiers traités avec succès.")
+        return {'FINISHED'}
+
+class BatchFixPanel(Panel):
+    bl_label = "Batch Anim Fixer"
+    bl_idname = "VIEW3D_PT_batch_anim_fixer"
+    bl_space_type = 'VIEW_3D'
+    bl_region_type = 'UI'
+    bl_category = 'Batch Anim Fixer'
+
+    def draw(self, context):
+        layout = self.layout
+        layout.label(text="Corriger animations .blend")
+        layout.operator("wm.batch_fix_animations", text="Sélectionner un dossier")
+
+def register():
+    bpy.utils.register_class(BatchFixOperator)
+    bpy.utils.register_class(BatchFixPanel)
+
+def unregister():
+    bpy.utils.unregister_class(BatchFixOperator)
+    bpy.utils.unregister_class(BatchFixPanel)
+
+if __name__ == "__main__":
+    register()
