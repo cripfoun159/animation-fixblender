@@ -3,4 +3,4 @@
 fais pour un amie 
 "Solution to automatically place each mocap animation at the 0 axis on X and Y, regardless of the position. Currently, the only existing script for this is on Blender.
 for my frend 
-https://youtu.be/4_McvqMfV4E
+exemple d'animation https://youtu.be/4_McvqMfV4E
